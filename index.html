@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<title>Smart Grid Energy Consumption Forecast</title>
+<style>
+  /* Reset and base */
+  * {
+    box-sizing: border-box;
+  }
+  body {
+    margin: 0; padding: 0;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    background: #101822;
+    color: #f0f0f0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-height: 100vh;
+    max-width: 350px;
+    margin: 0 auto;
+    padding: 16px;
+  }
+
+  header {
+    text-align: center;
+    margin-bottom: 12px;
+  }
+  header h1 {
+    font-weight: 700;
+    font-size: 1.6rem;
+    margin-bottom: 4px;
+    color: #00e5ff;
+    letter-spacing: 0.05em;
+  }
+  header p {
+    font-size: 0.9rem;
+    color: #a4c8d8;
+  }
+
+  #chart-container {
+    position: relative;
+    width: 100%;
+    height: 320px;
+    background: #16212b;
+    border-radius: 12px;
+    box-shadow: 0 0 12px #00e5ff55;
+    margin-bottom: 12px;
+  }
+
+  #controls {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-bottom: 20px;
+  }
+
+  label {
+    font-weight: 600;
+    font-size: 0.9rem;
+    margin-bottom: 3px;
+  }
+
+  input[type=number], button {
+    width: 100%;
+    padding: 10px 14px;
+    font-size: 1rem;
+    border-radius: 8px;
+    border: none;
+    outline: none;
+    transition: background-color 0.3s ease;
+  }
+  input[type=number] {
+    background: #223344;
+    color: #f0f0f0;
+  }
+  input[type=number]::placeholder {
+    color: #668899;
+  }
+
+  button {
+    background: #00e5ff;
+    color: #101822;
+    font-weight: 700;
+    cursor: pointer;
+    box-shadow: 0 4px 10px #00e5ffaa;
+  }
+  button:hover {
+    background: #00b8cc;
+  }
+
+  #info {
+    font-size: 0.9rem;
+    color: #66d9ffcc;
+    text-align: center;
+  }
+
+  /* Scroll fix for mobile */
+  html, body {
+    overscroll-behavior-y: contain;
+  }
+
+</style>
+</head>
+<body>
+<header>
+  <h1>Smart Grid Energy Forecast</h1>
+  <p>Predicting Energy Consumption Patterns Using Time Series Forecasting</p>
+</header>
+
+<div id="chart-container">
+  <canvas id="energyChart" width="350" height="320"></canvas>
+</div>
+
+<div id="controls">
+  <label for="dataPoints">Enter Number of Past Days (5-30):</label>
+  <input type="number" id="dataPoints" min="5" max="30" value="20" />
+  <button id="generateBtn">Generate & Forecast</button>
+</div>
+
+<div id="info">
+  Forecast uses Simple Exponential Smoothing<br>
+  Forecast horizon: 7 days ahead
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+(() => {
+  // Selectors
+  const ctx = document.getElementById('energyChart').getContext('2d');
+  const generateBtn = document.getElementById('generateBtn');
+  const dataPointsInput = document.getElementById('dataPoints');
+
+  // Forecast settings
+  const forecastDays = 7;
+  const smoothingAlpha = 0.3; // smoothing factor for exponential smoothing
+
+  // Generate example energy consumption data with some patterns and noise
+  // data points: energy consumed per day in kWh
+  function generateEnergyData(n) {
+    const data = [];
+    for (let i = 0; i < n; i++) {
+      // simulate base consumption with a pattern + random noise
+      // pattern: weekly cycle with 5 weekdays high, 2 weekend days lower
+      let weekday = (i % 7 < 5);
+      let base = weekday ? 120 : 85;
+      // trend: slight increase over time
+      base += i * 0.8;
+      // random noise +/-10%
+      let noise = base * (Math.random() * 0.2 - 0.1);
+      let value = Math.max(10, base + noise);
+      data.push(Math.round(value * 10) / 10);
+    }
+    return data;
+  }
+
+  // Simple Exponential Smoothing forecast
+  // Returns forecast array of length forecastHorizon
+  // https://en.wikipedia.org/wiki/Exponential_smoothing
+  function simpleExponentialSmoothing(series, alpha, horizon) {
+    if (!series.length) return [];
+
+    // Initialize smoothed value with first observation
+    let s = series[0];
+    for (let t = 1; t < series.length; t++) {
+      s = alpha * series[t] + (1 - alpha) * s;
+    }
+    // Forecast is the last smoothed value repeated for horizon
+    const forecast = Array(horizon).fill(Math.round(s * 10) / 10);
+    return forecast;
+  }
+
+  // Format labels for days ago up to future dates
+  function formatLabels(n, horizon) {
+    const labels = [];
+    for (let i = n - 1; i >= 0; i--) {
+      labels.push(`Day -${i}`);
+    }
+    for (let i = 1; i <= horizon; i++) {
+      labels.push(`Day +${i}`);
+    }
+    return labels;
+  }
+
+  // Chart instance variable
+  let energyChart;
+
+  function renderChart(pastData, forecastData) {
+    const totalData = pastData.concat(forecastData);
+    const labels = formatLabels(pastData.length, forecastData.length);
+
+    const pastDataLength = pastData.length;
+
+    const datasets = [
+      {
+        label: 'Historical Consumption (kWh)',
+        data: pastData,
+        borderColor: '#00e5ff',
+        backgroundColor: '#00e5ff55',
+        fill: true,
+        tension: 0.3,
+        pointRadius: 4,
+        pointHoverRadius: 6,
+        borderWidth: 2,
+      },
+      {
+        label: 'Forecasted Consumption (kWh)',
+        data: Array(pastDataLength).fill(null).concat(forecastData),
+        borderColor: '#ffdd59',
+        backgroundColor: '#ffdd5955',
+        fill: true,
+        borderDash: [10,6],
+        tension: 0.3,
+        pointRadius: 4,
+        pointHoverRadius: 6,
+        borderWidth: 2,
+      }
+    ];
+
+    if (energyChart) {
+      energyChart.data.labels = labels;
+      energyChart.data.datasets = datasets;
+      energyChart.update();
+    } else {
+      energyChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels: labels,
+          datasets: datasets
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          interaction: {
+            mode: 'nearest',
+            intersect: false
+          },
+          plugins: {
+            legend: {
+              labels: {
+                color: '#cceeff',
+                font: {weight:'bold', size:14}
+              }
+            },
+            tooltip: {
+              enabled: true,
+              backgroundColor: '#222',
+              titleColor: '#00e5ff',
+              bodyColor: '#eee',
+              cornerRadius: 6,
+              padding: 10,
+              mode: 'index',
+              intersect: false
+            }
+          },
+          scales: {
+            x: {
+              ticks: { color: '#88c0d0', maxRotation: 0, minRotation: 0, maxTicksLimit: 10 },
+              grid: { color: '#203040' },
+              title: {
+                display: true,
+                text: 'Days',
+                color: '#a8def0',
+                font: { size: 14, weight: 'bold' }
+              }
+            },
+            y: {
+              ticks: { color: '#88c0d0' },
+              grid: { color: '#203040' },
+              title: {
+                display: true,
+                text: 'Energy Consumption (kWh)',
+                color: '#a8def0',
+                font: { size: 14, weight: 'bold' }
+              },
+              beginAtZero: true
+            }
+          }
+        }
+      });
+    }
+  }
+
+  // Run initial chart
+  function initialRender() {
+    const n = parseInt(dataPointsInput.value) || 20;
+    const cleanN = Math.min(Math.max(n, 5), 30);
+    dataPointsInput.value = cleanN;
+    const pastData = generateEnergyData(cleanN);
+    const forecastData = simpleExponentialSmoothing(pastData, smoothingAlpha, forecastDays);
+    renderChart(pastData, forecastData);
+  }
+
+  generateBtn.addEventListener('click', () => {
+    initialRender();
+  });
+
+  // Initial load
+  initialRender();
+})();
+</script>
+</body>
+</html>
+</content>
+</create_file>
